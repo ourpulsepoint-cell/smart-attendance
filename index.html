@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Smart Attendance</title>
+  <meta name="theme-color" content="#0f766e">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><span class="dot"></span> Smart Attendance</div>
+    <div class="top-right">
+      <span id="queueBadge" class="badge warn hidden" title="Waiting to sync"></span>
+      <span id="netBadge" class="badge">…</span>
+    </div>
+  </header>
+
+  <!-- ============ LOGIN ============ -->
+  <section id="vLogin" class="view hidden">
+    <div class="card narrow">
+      <h1>Sign in</h1>
+      <p class="muted">Use the ID and PIN given by your office or school.</p>
+      <form id="loginForm" class="form">
+        <label>ID <input name="id" autocomplete="username" autocapitalize="characters" required></label>
+        <label>PIN <input name="pin" type="password" inputmode="numeric" autocomplete="current-password" required></label>
+        <button class="btn primary big" type="submit">Sign in</button>
+      </form>
+      <p id="cfgWarn" class="alert err hidden">API_URL is not set yet. Put your Apps Script web-app URL in <b>config.js</b>.</p>
+    </div>
+  </section>
+
+  <!-- ============ APP ============ -->
+  <main id="vApp" class="hidden">
+
+    <!-- TODAY -->
+    <section id="tToday" class="tab">
+      <div id="sensorBanner" class="alert info hidden">
+        <div><b>Turn on alerts.</b> Allow location, notifications and motion so the app can alert you at the gate and detect a shake.</div>
+        <button id="btnSensors" class="btn primary">Turn on</button>
+      </div>
+      <div id="gpsLine" class="statusline"></div>
+      <div id="armedCard"></div>
+      <h2 class="section-title">Today</h2>
+      <div id="todayList"></div>
+      <div id="map" class="map"></div>
+      <p class="muted small center">Keep this app open (or open it when you arrive). It checks your location while it is open.</p>
+    </section>
+
+    <!-- MANAGE (teacher/admin) -->
+    <section id="tManage" class="tab hidden">
+      <div class="card">
+        <h2>1 · Places (geofences)</h2>
+        <p class="muted small">Tap the map to set the centre, then set the radius. Use one place per office, campus or building.</p>
+        <div id="siteMap" class="map small-map"></div>
+        <form id="siteForm" class="form grid2">
+          <label class="span2">Name <input name="name" placeholder="e.g. Head Office / Block B Room 204" required></label>
+          <label>Type
+            <select name="type"><option value="office">Office</option><option value="classroom">Classroom</option><option value="campus">Campus</option></select>
+          </label>
+          <label>Radius (m) <input name="radius" type="number" min="10" max="2000" value="60" required></label>
+          <label>Latitude <input name="lat" type="number" step="any" required></label>
+          <label>Longitude <input name="lng" type="number" step="any" required></label>
+          <button type="button" id="btnHere" class="btn">Use my location</button>
+          <button type="submit" class="btn primary">Save place</button>
+        </form>
+        <div id="siteList" class="list"></div>
+      </div>
+
+      <div class="card">
+        <h2>2 · Attendance times</h2>
+        <p class="muted small">Teachers set the class time here; office managers set duty hours. Attendance opens a little before the start time.</p>
+        <form id="sessForm" class="form grid2">
+          <label class="span2">Title <input name="title" placeholder="e.g. Physics – Class 8A / Office duty" required></label>
+          <label>Kind
+            <select name="type"><option value="class">Class</option><option value="office">Office</option></select>
+          </label>
+          <label>Place <select name="siteId" id="sessSite" required></select></label>
+          <label class="span2">Who (group) <input name="group" list="groupList" placeholder="Class 8A  (or ALL)" value="ALL" required></label>
+          <datalist id="groupList"></datalist>
+          <div class="span2 days" id="daysBox"></div>
+          <label>Start <input name="start" type="time" value="09:00" required></label>
+          <label>End <input name="end" type="time" value="09:45" required></label>
+          <label>Grace (min) <input name="graceMin" type="number" min="0" max="120" value="10"></label>
+          <button type="submit" class="btn primary">Save time</button>
+        </form>
+        <div id="sessList" class="list"></div>
+      </div>
+
+      <div class="card adm-only">
+        <h2>3 · People</h2>
+        <form id="userForm" class="form grid2">
+          <label>ID <input name="id" required></label>
+          <label>Name <input name="name"></label>
+          <label>Role
+            <select name="role"><option>student</option><option>staff</option><option>teacher</option><option>admin</option></select>
+          </label>
+          <label>Group <input name="group" list="groupList" placeholder="Class 8A / Office"></label>
+          <label>PIN <input name="pin" inputmode="numeric" placeholder="4–8 digits"></label>
+          <button type="submit" class="btn primary">Add / update</button>
+        </form>
+        <p class="muted small">You can also type people straight into the <b>Users</b> sheet (plain PINs are hashed on first login).</p>
+        <form id="resetForm" class="form row">
+          <input name="userId" placeholder="ID whose phone changed" required>
+          <button class="btn">Reset phone & fingerprint</button>
+        </form>
+        <form id="revokeForm" class="form row">
+          <input name="userId" placeholder="ID whose card (QR/NFC) was lost" required>
+          <button class="btn danger">Cancel old card</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- KIOSK -->
+    <section id="tKiosk" class="tab hidden">
+      <div class="card">
+        <h2>Card + face</h2>
+        <p class="muted small">For people without a smartphone. Put this phone/tablet at the gate or classroom door. Each person <b>taps their NFC card</b> (or shows the QR card), looks at the camera and <b>blinks or turns their head</b> when asked. A photo is kept as proof. People without an enrolled face type their PIN.</p>
+        <label>Session <select id="cSession"></select></label>
+        <button id="btnCardKiosk" class="btn primary big">Start scanning</button>
+        <div class="form row">
+          <button id="btnEnrol" class="btn">Enrol a face (one time)</button>
+          <button id="btnPrintCards" class="btn">Print QR ID cards</button>
+          <button id="btnLinkNfc" class="btn">Link NFC cards</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>ID + PIN (fallback)</h2>
+        <p class="muted small">If someone forgot their card: they type their ID and PIN on this device. Location is taken from this device.</p>
+        <form id="kioskForm" class="form">
+          <label>Session <select name="sessionId" id="kSession" required></select></label>
+          <label>ID <input name="userId" autocapitalize="characters" required></label>
+          <label>PIN <input name="pin" type="password" inputmode="numeric" required></label>
+          <button class="btn primary big">Mark attendance</button>
+        </form>
+        <div id="kioskLog" class="list"></div>
+      </div>
+      <div class="card">
+        <h2>Roll call</h2>
+        <p class="muted small">Tick names by hand — useful for a class without phones or when the network is down.</p>
+        <div class="form row">
+          <select id="rSession"></select>
+          <input id="rDate" type="date">
+          <button id="btnRoster" class="btn">Open list</button>
+        </div>
+        <div id="rosterBox"></div>
+      </div>
+    </section>
+
+    <!-- ME -->
+    <section id="tMe" class="tab hidden">
+      <div class="card">
+        <div id="meInfo"></div>
+      </div>
+      <div class="card">
+        <h2>Phone setup</h2>
+        <div class="list">
+          <div class="item"><div><b>Alerts, location & shake</b><div class="muted small" id="sensorState"></div></div><button id="btnSensors2" class="btn">Turn on</button></div>
+          <div class="item"><div><b>Fingerprint / Face unlock</b><div class="muted small" id="bioState"></div></div><button id="btnBio" class="btn">Register</button></div>
+          <div class="item"><div><b>Test shake</b><div class="muted small">Shake the phone firmly 3–4 times.</div></div><span id="shakeTest" class="pill">waiting</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Offline records</h2>
+        <div id="queueInfo" class="muted"></div>
+        <button id="btnSync" class="btn">Sync now</button>
+      </div>
+      <div class="card">
+        <h2>Change PIN</h2>
+        <form id="pinForm" class="form row">
+          <input name="oldPin" type="password" inputmode="numeric" placeholder="Current PIN" required>
+          <input name="newPin" type="password" inputmode="numeric" placeholder="New PIN" required>
+          <button class="btn">Change</button>
+        </form>
+      </div>
+      <button id="btnLogout" class="btn danger wide">Sign out</button>
+      <p class="muted small center" id="installHint"></p>
+    </section>
+  </main>
+
+  <nav id="tabs" class="tabs hidden">
+    <button data-tab="tToday" class="on">Today</button>
+    <button data-tab="tManage" class="mgr">Manage</button>
+    <button data-tab="tKiosk" class="mgr">Kiosk</button>
+    <button data-tab="tMe">Me</button>
+  </nav>
+
+  <div id="modal" class="modal hidden"><div class="sheet" id="modalBody"></div></div>
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+  <script src="qr.js"></script>
+  <script src="idcheck.js"></script>
+</body>
+</html>
